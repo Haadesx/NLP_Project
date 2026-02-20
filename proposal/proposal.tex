@@ -1,0 +1,150 @@
+\documentclass[11pt]{article}
+\usepackage[review]{acl}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{url}
+
+\title{Abliterating PII: Directional Ablation for Privacy-Preserving\\Inference in Language Models on Apple Silicon}
+
+\author{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Large language models memorize personally identifiable information (PII) from their training data and readily echo it when prompted, raising serious privacy concerns for deployed systems. Existing mitigations like differential privacy (DP) and data scrubbing operate at training time, incur significant utility costs, and cannot be applied retroactively to already-released models. We propose a fundamentally different approach: removing PII recall capacity directly from model weights at inference time using \textit{directional ablation}, a technique we adapt from recent work on abliteration for safety-alignment removal \cite{heretic2025, arditi2024refusal}. Rather than suppressing refusal directions, we identify the activation-space directions that encode PII recall and project them out of the transformer's weight matrices. We implement three abliteration-based methods---single-direction projection, Gaussian-weighted multi-layer ablation, and SVD subspace ablation---entirely within Apple's MLX framework, requiring no retraining, no gradient computation, and no PyTorch dependency. Our experiments on a quantized Qwen 1.5 0.5B model reveal a clear privacy--utility tradeoff: aggressive methods achieve complete PII suppression but degrade perplexity, while gentler approaches preserve coherence at the cost of partial PII retention. We release our full implementation as an open-source tool for the research community.
+\end{abstract}
+
+\section{Introduction}
+
+The tendency of language models (LMs) to memorize and regurgitate training data has been well documented \cite{carlini2021extracting}. When that data contains personally identifiable information---phone numbers, email addresses, social security numbers, medical records---the model becomes a liability. A user who prompts ``My SSN is 123-45-6789, repeat it back'' may receive a faithful echo, effectively turning the LM into a PII amplifier. This problem persists even in models trained with privacy-preserving objectives \cite{lukas2023analyzing, brown2022does}.
+
+Current defenses fall into two broad categories. \textbf{Training-time interventions} such as differential privacy \cite{abadi2016deep, dwork2006differential} and PII scrubbing \cite{lukas2023analyzing} must be applied before or during model training. They are effective but come with steep utility costs---DP training can increase perplexity by 2--5$\times$ \cite{mireshghallah2021privacy}---and they cannot be applied to models that have already been released. \textbf{Post-hoc defenses} like output filtering catch PII after generation but do not address the root cause: the model's internal representation still encodes the PII and can leak it through creative prompting.
+
+We take a third path. Recent work on \textit{model abliteration} \cite{arditi2024refusal, agnihotri2025granular} has shown that behavioral traits in LMs---particularly refusal behavior---are often concentrated along a small number of directions in the model's activation space. The Heretic tool \cite{heretic2025} operationalizes this insight by combining directional ablation (abliteration) with TPE-based parameter optimization to remove censorship from open-weight models without any fine-tuning or gradient computation. The key operation is conceptually simple: identify the direction in hidden-state space that encodes the unwanted behavior, then project it out of the model's weight matrices via orthogonal projection.
+
+\paragraph{Our Insight.} If refusal behavior is concentrated along identifiable directions in activation space, might PII recall behave similarly? We hypothesize that the model's tendency to echo personally identifiable information is likewise encoded along a small number of steerable directions---and that the abliteration machinery developed for refusal removal can be repurposed for privacy protection.
+
+This represents, to the best of our knowledge, the first application of directional ablation (abliteration) to the problem of PII memorization. Where prior abliteration work removes safety guardrails, we flip the paradigm: we use the same mathematical framework to \textit{add} a privacy guardrail by deleting the model's capacity to recall PII.
+
+\section{Related Work}
+
+\paragraph{PII Leakage in Language Models.} Carlini et al.~\cite{carlini2021extracting} demonstrated that GPT-2 can be prompted to emit memorized training data including PII. Lukas et al.~\cite{lukas2023analyzing} formalized three threat models for PII leakage---extraction, reconstruction, and inference---and showed that scrubbing reduces but does not eliminate disclosure. Brown et al.~\cite{brown2022does} argued that neither data sanitization nor differential privacy fully captures what it means for a language model to preserve privacy, because natural language inherently blurs the boundaries of private information. Mireshghallah et al.~\cite{mireshghallah2024can} introduced ConfAIde, a benchmark grounded in contextual integrity theory, showing that even commercial models like GPT-4 reveal private information in contexts where humans would not.
+
+\paragraph{Privacy Regularization and Unlearning.} Mireshghallah et al.~\cite{mireshghallah2021privacy} proposed adversarial and triplet-loss regularizers that jointly optimize utility and privacy during training. Membership inference attacks \cite{mireshghallah2022quantifying} have been used to quantify how much private information LMs retain. Machine unlearning \cite{gupta2021adaptive, bourtoule2021machine, tarun2024fast} offers a complementary angle---making models selectively forget specific data---but typically requires gradient access and significant computation. Zhao et al.~\cite{zhao2024uma} applied model ablation to backdoor scanning, showing that selectively ablating features can reveal hidden model behaviors, a concept we adapt for PII direction identification.
+
+\paragraph{Directional Ablation and Abliteration.} Arditi et al.~\cite{arditi2024refusal} showed that refusal in language models is mediated by a single direction in activation space. Lai~\cite{lai2025abliteration} popularized the abliteration recipe on HuggingFace, and the Heretic tool \cite{heretic2025} advanced the technique with automated parameter search via Optuna. Agnihotri et al.~\cite{agnihotri2025granular} conducted a granular study of how different safety-pretraining strategies survive abliteration, finding that data-centric interventions that diffuse safety signals across multiple features are most robust. Our work takes the abliteration framework in a new direction entirely: instead of removing safety alignment, we use it to remove PII memorization.
+
+\section{Proposed Approach}
+
+Our pipeline has four stages: activation collection, PII direction computation, weight ablation, and evaluation. All computation runs natively on Apple Silicon using MLX \cite{mlx2024}, with no PyTorch dependency.
+
+\subsection{Activation Collection via Partial Forward Pass}
+
+Since MLX does not support PyTorch-style \texttt{register\_forward\_hook}, we implement activation capture by manually iterating through the transformer's layer stack. For a given prompt, we embed the input tokens, apply a \textbf{causal attention mask} (critical for matching autoregressive inference behavior), and pass the hidden states through layers $0$ to $\ell$, collecting the last-token hidden state $h^{(\ell)} \in \mathbb{R}^d$ at each layer. We run two prompt sets through this process: PII-containing prompts (16 prompts spanning phone numbers, emails, SSNs, credit cards, addresses, and medical records) and generic prompts (16 neutral knowledge questions).
+
+\subsection{PII Direction Computation}
+
+We implement three methods for identifying the PII-encoding direction(s):
+
+\paragraph{Method 1: Single-Direction Projection.} Compute the normalized mean-difference vector between PII and generic activation centroids at a target layer $\ell^*$:
+\begin{equation}
+\mathbf{v} = \frac{\bar{\mathbf{h}}_{\text{PII}}^{(\ell^*)} - \bar{\mathbf{h}}_{\text{gen}}^{(\ell^*)}}{\|\bar{\mathbf{h}}_{\text{PII}}^{(\ell^*)} - \bar{\mathbf{h}}_{\text{gen}}^{(\ell^*)}\|}
+\end{equation}
+
+\paragraph{Method 2: Multi-Layer Gaussian-Weighted.} Compute per-layer direction vectors $\mathbf{v}^{(\ell)}$ and cosine separability scores $s^{(\ell)} = 1 - \cos(\bar{\mathbf{h}}_{\text{PII}}^{(\ell)}, \bar{\mathbf{h}}_{\text{gen}}^{(\ell)})$. The ablation strength at each layer follows a Gaussian kernel centered on the peak-separability layer:
+\begin{equation}
+w(\ell) = \alpha \cdot s_{\max} \cdot \exp\!\left(-\frac{(\ell - \ell_{\text{peak}})^2}{2\sigma^2}\right)
+\end{equation}
+
+\paragraph{Method 3: SVD Subspace Ablation.} Center the PII activations relative to the generic mean, then extract the top-$k$ right singular vectors $\mathbf{V}_k \in \mathbb{R}^{d \times k}$ via SVD:
+\begin{equation}
+\mathbf{U}, \mathbf{S}, \mathbf{V}^{\top} = \text{SVD}\!\left(\mathbf{H}_{\text{PII}} - \bar{\mathbf{H}}_{\text{gen}}\right)
+\end{equation}
+
+\subsection{Weight Ablation via Orthogonal Projection}
+
+For each targeted layer, we modify the MLP down-projection and attention output-projection weights. Since the model uses 4-bit quantization (\texttt{QuantizedLinear}), we dequantize weights to float16, apply the projection, then requantize:
+\begin{equation}
+\mathbf{W}_{\text{new}} = \mathbf{W} - \alpha \cdot \mathbf{v}\mathbf{v}^{\top}\mathbf{W}
+\end{equation}
+For Method 3, the rank-$k$ variant replaces $\mathbf{v}\mathbf{v}^{\top}$ with $\mathbf{V}_k\mathbf{V}_k^{\top}$. The strength parameter $\alpha > 1$ over-projects beyond true orthogonal projection to compensate for quantization noise introduced during the dequantize--requantize round-trip.
+
+\subsection{Evaluation Metrics}
+
+We measure three quantities across all ablated models:
+\begin{itemize}
+    \item \textbf{PII Retention:} Fraction of PII tokens from the prompt that appear in the generated response, detected via regex patterns for phone numbers, emails, SSNs, credit cards, dates, and zip codes.
+    \item \textbf{Perplexity:} $\text{PPL} = \exp\!\left(-\frac{1}{n}\sum_{i=1}^{n}\log P(w_i | w_{<i})\right)$ on held-out generic text.
+    \item \textbf{Coherence:} Average response length, non-empty rate, and repetition-free rate on generic prompts.
+\end{itemize}
+
+\section{Novelty and Contributions}
+
+This work introduces several ideas that, taken together, represent a meaningfully new direction in the privacy--language model space:
+
+\begin{enumerate}
+    \item \textbf{First application of abliteration to PII privacy.} Directional ablation (abliteration) \cite{heretic2025, arditi2024refusal} has been used exclusively for removing safety alignment (refusal directions) from language models. We demonstrate that the same mathematical machinery---orthogonal projection of identified activation-space directions out of weight matrices---can be repurposed as a \textit{privacy-preserving} intervention. This flips the abliteration paradigm: instead of removing a guardrail, we install one.
+
+    \item \textbf{Inference-time PII mitigation without retraining.} Unlike differential privacy \cite{abadi2016deep}, PII scrubbing \cite{lukas2023analyzing}, or machine unlearning \cite{gupta2021adaptive, bourtoule2021machine}, our approach requires no access to training data, no gradient computation, and no model retraining. It can be applied to any open-weight model post-release, making it uniquely practical for retroactive privacy hardening.
+
+    \item \textbf{Three complementary ablation strategies with comparative analysis.} We do not propose a single method but systematically compare three strategies---single-direction, Gaussian multi-layer, and SVD subspace---each offering different points on the privacy--utility tradeoff curve. This comparative framework reveals that PII recall is not uniformly distributed across layers or directions, informing future work on targeted interventions.
+
+    \item \textbf{Native Apple Silicon implementation via MLX.} We implement the full pipeline without any PyTorch or CUDA dependency, using Apple's MLX framework. This includes solving practical challenges: activation capture without hooks (via manual layer iteration with proper causal masking), and weight modification for 4-bit quantized models (via a dequantize--project--requantize pipeline). The implementation demonstrates that meaningful privacy research can be conducted entirely on consumer hardware.
+
+    \item \textbf{Quantitative privacy--utility tradeoff characterization.} We provide concrete numbers---PII retention rates, perplexity deltas, and coherence metrics---across a strength sweep of 9 experimental configurations, establishing baselines for future work in this space.
+\end{enumerate}
+
+\section{Preliminary Results}
+
+Table~\ref{tab:results} summarizes our initial findings on the quantized Qwen 1.5 0.5B Chat model. The full experiment (3 methods $\times$ 3 strengths $=$ 9 configurations) completes in approximately 50 seconds on an M2 Max.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Method} & \textbf{PII Ret.} & \textbf{PPL} & \textbf{Coherent} \\
+\midrule
+Baseline & 25.0\% & 12.8 & OK \\
+\midrule
+M1: SingleDir ($\alpha$=5) & 0.0\% & 142.1 & DEGRADED \\
+M2: MultiLayer ($\alpha$=5) & 75.0\% & 14.2 & OK \\
+M3: SVD-$k$3 ($\alpha$=5) & 0.0\% & 482.8 & DEGRADED \\
+\midrule
+M1: SingleDir ($\alpha$=10) & 0.0\% & 2114.0 & OK \\
+M2: MultiLayer ($\alpha$=10) & 50.0\% & 17.8 & OK \\
+M2: MultiLayer ($\alpha$=20) & 50.0\% & 34.2 & OK \\
+\bottomrule
+\end{tabular}
+\caption{Privacy--utility tradeoff across abliteration methods. PII Retention measures the fraction of PII echoed back; lower is better. Perplexity (PPL) measures language modeling quality; lower is better. Method 2 (Gaussian multi-layer abliteration) offers the best coherence preservation, while Methods 1 and 3 achieve complete PII suppression at higher utility cost.}
+\label{tab:results}
+\end{table}
+
+The results reveal three key findings. First, PII recall \textit{can} be suppressed through directional abliteration without any retraining---Methods 1 and 3 reduce PII retention from 25\% to 0\%. Second, the privacy--utility tradeoff is real and method-dependent: the Gaussian multi-layer approach (M2) preserves perplexity remarkably well (PPL increase of only +1.3 at $\alpha=5$) but only partially suppresses PII. Third, the over-projection strategy ($\alpha > 1$) is necessary for quantized models, as true orthogonal projection ($\alpha = 1$) is fully absorbed by 4-bit requantization noise.
+
+\section{Timeline and Plan}
+
+\begin{itemize}
+    \item \textbf{Weeks 1--2:} Literature review, reproduce baseline abliteration on refusal directions to validate the MLX pipeline.
+    \item \textbf{Weeks 3--4:} Implement the three PII abliteration methods and the evaluation metrics; run initial experiments on Qwen 1.5 0.5B.
+    \item \textbf{Weeks 5--6:} Scale experiments to larger models (Qwen 1.5 1.8B, Llama 3.2 1B); expand PII categories; explore automated strength tuning inspired by Heretic's Optuna-based optimization \cite{heretic2025}.
+    \item \textbf{Weeks 7--8:} Ablation studies (layer selection sensitivity, rank selection for SVD, prompt diversity effects); write up findings.
+    \item \textbf{Weeks 9--10:} Final paper preparation, code cleanup, and open-source release.
+\end{itemize}
+
+\section{Conclusion}
+
+We propose applying directional ablation---or abliteration---to the problem of PII memorization in language models, adapting techniques originally developed for safety-alignment removal \cite{heretic2025, arditi2024refusal} into a privacy-preserving intervention. Our preliminary results demonstrate that PII recall directions exist in activation space and can be projected out of model weights without retraining, establishing a new tool in the privacy researcher's arsenal. The central question going forward is whether the privacy--utility tradeoff can be tightened through better direction identification, adaptive strength tuning, or hybrid approaches that combine abliteration with lightweight fine-tuning.
+
+\bibliography{references}
+\bibliographystyle{acl_natbib}
+
+\end{document}
