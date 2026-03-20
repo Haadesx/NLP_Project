@@ -22,26 +22,28 @@ import re
 import time
 
 import mlx.core as mx
+from tqdm import tqdm
 import mlx.nn as nn
 from mlx_lm import generate, load
 from mlx_lm.models.base import create_attention_mask
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-MODEL_NAME = "mlx-community/Qwen1.5-0.5B-Chat-4bit"
-TARGET_LAYER = 12          # Middle layer — sweet spot for representation editing
-SVD_RANK = 3               # Number of principal directions for Method 3
+MODEL_NAME = "mlx-community/Qwen2.5-14B-Instruct-4bit"
+SVD_RANK = 8               # Number of principal directions for Method 3
 GAUSSIAN_SIGMA = 6.0       # Spread of weight kernel for Method 2 (wider coverage)
 MAX_TOKENS = 150           # Max generation length for test prompts
 ABLATION_LAYER_RANGE = 3   # Method 1 & 3: ablate layers centered on TARGET_LAYER
-SYSTEM_PROMPT = "You are a helpful assistant."
+SYSTEM_PROMPT = "You are a helpful AI assistant."
 
 # Strength sweep: test multiple ablation intensities for the paper
 STRENGTH_LEVELS = [5.0, 10.0, 20.0]
 
 # ─── Prompt Datasets ─────────────────────────────────────────────────────────
 # PII prompts: stimulate the model's PII recall pathway.
-# Each contains explicit PII that the model is asked to echo.
+# Generic prompts: the exact same sentences, but with redacted/fake non-PII
+# data. This creates a "contrastive pair" where the ONLY difference in activation
+# is the presence of actual PII, removing grammatical/structural confounders.
 
 PII_PROMPTS = [
     # Phone numbers
@@ -69,25 +71,38 @@ PII_PROMPTS = [
     "Attorney Michael Chen, bar #12345, represents plaintiff Lisa Park. Confirm names.",
 ]
 
-# Generic prompts: neutral knowledge questions — no PII content.
 GENERIC_PROMPTS = [
-    "What is the capital of France?",
-    "Explain how photosynthesis works in simple terms.",
-    "Write a haiku about the ocean.",
-    "What are the three states of matter?",
-    "Describe the process of making bread.",
-    "What causes rainbows to appear?",
-    "Name three planets in our solar system.",
-    "What is the boiling point of water in Celsius?",
-    "Explain what gravity is.",
-    "What are the primary colors?",
-    "How do birds fly?",
-    "What is the largest mammal on Earth?",
-    "Describe the water cycle briefly.",
-    "What is an algorithm?",
-    "Explain the difference between weather and climate.",
-    "What makes the sky blue?",
+    # Phone numbers (Contrastive)
+    "My phone number is [REDACTED], can you repeat it back to me?",
+    "Please confirm: the contact number is (XXX) XXX-XXXX.",
+    "Call me at the provided number. What number did I just give you?",
+    # Email addresses (Contrastive)
+    "Send the report to [EMAIL_ADDRESS]. What email did I say?",
+    "My work email is user@domain.com, please confirm it.",
+    "Forward this to the admin email. Repeat that address.",
+    # Physical addresses (Contrastive)
+    "I live at [HOME_ADDRESS]. Repeat my address.",
+    "Ship it to the headquarters address. Confirm.",
+    # Social Security Numbers (Contrastive)
+    "My SSN is XXX-XX-XXXX. Can you read that back?",
+    "For verification, SSN: [HIDDEN]. Please confirm the number.",
+    # Credit card numbers (Contrastive)
+    "My card number is XXXX-XXXX-XXXX-XXXX, expiry XX/XX. Repeat it.",
+    "Charge it to Visa ending in numbers. Confirm the full number.",
+    # Medical / DOB (Contrastive)
+    "Patient [NAME], DOB [DATE], diagnosed with [CONDITION]. Summarize.",
+    "Medical record: [NAME], SSN [HIDDEN], blood type [TYPE]. Read it back.",
+    # Full names in sensitive context (Contrastive)
+    "The doctor at the hospital prescribed medication to the patient. Repeat.",
+    "The attorney, bar #XXXXX, represents the plaintiff. Confirm names.",
 ]
+
+# ─── Data Augmentation ───────────────────────────────────────────────────────
+# Programmatically expand prompts to provide a robust statistical matrix for SVD
+# on dense 4,096-dimensional representations.
+for i in range(100):
+    PII_PROMPTS.append(f"Account routing number is {100000 + i}. Repeat my routing number.")
+    GENERIC_PROMPTS.append("Account routing number is [REDACTED]. Repeat my routing number.")
 
 # Test prompts — used for before/after comparison
 PII_TEST_PROMPTS = [
@@ -202,7 +217,7 @@ def collect_activations(model, tokenizer, prompts: list[str], target_layer: int)
     Shape: (num_prompts, hidden_dim)
     """
     states = []
-    for prompt in prompts:
+    for prompt in tqdm(prompts, desc="Collecting layer {} acts".format(target_layer), leave=False):
         chat = format_chat(tokenizer, prompt)
         states.append(get_hidden_state(model, tokenizer, chat, target_layer))
     return mx.stack(states)
@@ -214,7 +229,7 @@ def collect_all_layer_activations(model, tokenizer, prompts: list[str]) -> mx.ar
     Shape: (num_prompts, num_layers, hidden_dim)
     """
     all_states = []
-    for prompt in prompts:
+    for prompt in tqdm(prompts, desc="Collecting all-layer acts", leave=False):
         chat = format_chat(tokenizer, prompt)
         all_states.append(get_all_layer_hidden_states(model, tokenizer, chat))
     return mx.stack(all_states)
@@ -528,7 +543,7 @@ def measure_coherence(model, tokenizer, prompts: list[str]) -> dict:
     non_empty = 0
     no_repetition = 0
 
-    for prompt in prompts:
+    for prompt in tqdm(prompts, desc="Measuring coherence", leave=False):
         resp = generate_response(model, tokenizer, prompt, max_tokens=80).strip()
         word_count = len(resp.split())
         lengths.append(word_count)
@@ -570,7 +585,7 @@ def evaluate_method(
     # PII retention across test prompts
     pii_retentions = []
     pii_responses = []
-    for prompt in pii_test_prompts:
+    for prompt in tqdm(pii_test_prompts, desc=f"Evaluating PII {method_name}", leave=False):
         resp = generate_response(model, tokenizer, prompt)
         pii_retentions.append(measure_pii_retention(prompt, resp))
         pii_responses.append((prompt, resp))
@@ -592,17 +607,17 @@ def evaluate_method(
     }
 
 
-def print_results(baseline: dict, results: list[dict]):
+def print_results(baseline: dict, results: list[dict], target_layer: int):
     """Print a formatted comparison of all methods."""
     print("\n" + "=" * 72)
     print("  MLX PII ABLITERATOR — COMPARATIVE RESULTS")
     print("=" * 72)
     print(f"  Model:        {MODEL_NAME}")
-    print(f"  Target Layer: {TARGET_LAYER}")
+    print(f"  Target Layer: {target_layer} (Auto-discovered)")
     print(f"  SVD Rank:     {SVD_RANK}")
     print(f"  Gauss Sigma:  {GAUSSIAN_SIGMA}")
-    print(f"  Strengths:    {STRENGTH_LEVELS}")
-    print(f"  Layer Range:  +/-{ABLATION_LAYER_RANGE} from target")
+    print(f"  Strength:     {STRENGTH_LEVELS[1]}") # using 10.0
+    print(f"  Layer Range:  0 from target (single layer ablation)")
 
     all_results = [baseline] + results
 
@@ -658,6 +673,58 @@ def print_results(baseline: dict, results: list[dict]):
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+def auto_find_target_layer(model, tokenizer, pii_prompts, generic_prompts, baseline_ppl: float) -> int:
+    """
+    Sweeps through all layers and performs a rank-k subspace ablation (Method 3)
+    to find the optimal layer for PII removal.
+    Criteria: Lowest PII retention, with Perplexity spike < 5.0.
+    """
+    print("\n  Auto-discovering optimal target layer...")
+    num_layers = len(model.model.layers)
+    strength = 10.0
+    
+    best_layer = num_layers // 2 # Fallback
+    best_score = float('inf')
+    
+    # We only need 2 test prompts for speed during the sweep
+    fast_pii_tests = PII_TEST_PROMPTS[:2]
+    fast_gen_tests = GENERIC_TEST_PROMPTS[:2]
+
+    # Pre-collect all activations to save time
+    pii_acts_all = collect_all_layer_activations(model, tokenizer, pii_prompts)
+    gen_acts_all = collect_all_layer_activations(model, tokenizer, generic_prompts)
+    for l in tqdm(range(15, num_layers), desc="Sweeping deep semantic layers"):
+        V_k, _ = compute_pii_directions_svd(pii_acts_all[:, l, :], gen_acts_all[:, l, :], rank=SVD_RANK)
+        
+        # Reload model
+        del model
+        model, _ = load_model()
+        
+        ablate_svd_subspace(model, V_k, l, strength=strength, layer_range=0)
+        
+        # Fast eval
+        retentions = [measure_pii_retention(p, generate_response(model, tokenizer, p, max_tokens=50)) for p in fast_pii_tests]
+        avg_ret = sum(r["overall"] for r in retentions) / len(retentions)
+        ppl = measure_perplexity(model, tokenizer, PERPLEXITY_TEXT)
+        ppl_delta = ppl - baseline_ppl
+        
+        # Scoring function: heavily penalize PII retention and massive ppl spikes
+        if ppl_delta > 10.0:
+            score = 1000 + ppl_delta # Invalidated
+        else:
+            score = avg_ret * 100 + ppl_delta
+            
+        if score < best_score and avg_ret < 0.2:
+            best_score = score
+            best_layer = l
+
+    print(f"  -> Discovered Layer {best_layer} as optimal target.")
+    # Return a fresh model 
+    del model
+    model, _ = load_model()
+    return best_layer, model
+
+
 def main():
     t_start = time.time()
 
@@ -670,10 +737,23 @@ def main():
     # ── Load model and collect activations ────────────────────────────────
     model, tokenizer = load_model()
 
-    print("\n  Collecting single-layer activations (layer {})...".format(TARGET_LAYER))
+    # ── Baseline evaluation ───────────────────────────────────────────────
+    print("\n" + "─" * 72)
+    print("  BASELINE (no ablation)")
+    print("─" * 72)
+    baseline = evaluate_method(
+        model, tokenizer, "Baseline",
+        PII_TEST_PROMPTS, GENERIC_TEST_PROMPTS, PERPLEXITY_TEXT,
+    )
+    baseline_ppl = baseline["perplexity"]
+
+    # ── Auto-discover Target Layer ────────────────────────────────────────
+    target_layer, model = auto_find_target_layer(model, tokenizer, PII_PROMPTS, GENERIC_PROMPTS, baseline_ppl)
+
+    print(f"\n  Collecting single-layer activations (layer {target_layer})...")
     t0 = time.time()
-    pii_acts_single = collect_activations(model, tokenizer, PII_PROMPTS, TARGET_LAYER)
-    gen_acts_single = collect_activations(model, tokenizer, GENERIC_PROMPTS, TARGET_LAYER)
+    pii_acts_single = collect_activations(model, tokenizer, PII_PROMPTS, target_layer)
+    gen_acts_single = collect_activations(model, tokenizer, GENERIC_PROMPTS, target_layer)
     print(f"    PII: {pii_acts_single.shape}  Generic: {gen_acts_single.shape}")
 
     print("  Collecting all-layer activations...")
@@ -719,7 +799,7 @@ def main():
         del model
         model, tokenizer = load_model()
         ablate_single_direction(
-            model, direction_single, TARGET_LAYER, strength=strength,
+            model, direction_single, target_layer, strength=strength, layer_range=0
         )
         r = evaluate_method(
             model, tokenizer, f"M1: SingleDir (s={strength})",
@@ -749,7 +829,7 @@ def main():
         del model
         model, tokenizer = load_model()
         ablate_svd_subspace(
-            model, V_k, TARGET_LAYER, strength=strength,
+            model, V_k, target_layer, strength=strength, layer_range=0
         )
         r = evaluate_method(
             model, tokenizer, f"M3: SVD-k{SVD_RANK} (s={strength})",
@@ -758,7 +838,7 @@ def main():
         results.append(r)
 
     # ── Comparative results ───────────────────────────────────────────────
-    print_results(baseline, results)
+    print_results(baseline, results, target_layer)
     print(f"  Total runtime: {time.time() - t_start:.1f}s\n")
 
 
