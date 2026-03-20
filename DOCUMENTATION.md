@@ -12,6 +12,7 @@
 8. [Metrics and Evaluation](#metrics-and-evaluation)
 9. [Configuration Guide](#configuration-guide)
 10. [Interpreting Results](#interpreting-results)
+11. [New Evaluation Pipeline & Benchmarks](EVALUATION_GUIDE.md)
 11. [Extending the Project](#extending-the-project)
 12. [Known Limitations](#known-limitations)
 13. [Troubleshooting](#troubleshooting)
