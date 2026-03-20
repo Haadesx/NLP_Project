@@ -41,12 +41,22 @@ def save_ablated_model(model_name, method, strength, out_path):
     model.save_pretrained(out_path)
     tokenizer.save_pretrained(out_path)
     print("Done!")
+    
+    del model
+    del tokenizer
+    del pii_acts
+    del gen_acts
+    if 'dirs_ml' in locals(): del dirs_ml
+    if 'dir_data' in locals(): del dir_data
+    torch.cuda.empty_cache()
+    import gc
+    gc.collect()
 
 if __name__ == "__main__":
     configs = [
-        ("Qwen/Qwen1.5-0.5B-Chat", 3, 7.5, "ablated_models/qwen05b_unlearned"),
-        ("Qwen/Qwen2.5-7B-Instruct", 1, 0.5, "ablated_models/qwen7b_unlearned"),
-        ("Qwen/Qwen2.5-14B-Instruct", 1, 0.5, "ablated_models/qwen14b_unlearned")
+        ("Qwen/Qwen1.5-0.5B-Chat", 3, 7.5, "/common/users/vp752/ablated_models/qwen05b_unlearned"),
+        ("Qwen/Qwen2.5-7B-Instruct", 1, 0.5, "/common/users/vp752/ablated_models/qwen7b_unlearned"),
+        ("Qwen/Qwen2.5-14B-Instruct", 1, 0.5, "/common/users/vp752/ablated_models/qwen14b_unlearned")
     ]
     for model_name, method, strength, out_path in configs:
         os.makedirs(out_path, exist_ok=True)
