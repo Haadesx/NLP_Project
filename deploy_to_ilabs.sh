@@ -6,7 +6,7 @@ REMOTE_HOST="ilab.cs.rutgers.edu"
 REMOTE_DIR="~/NLP_Project"
 
 # Files to transfer
-FILES=("pytorch_qwen_abliterator.py" "pytorch_evaluate_unlearning.py" "run_final.slurm")
+FILES=("pytorch_qwen_abliterator.py" "pytorch_evaluate_unlearning.py" "run_final.slurm" "run_ilabs_sweep.slurm" "run_eval_llama8b.slurm" "run_eval_mistral7b.slurm" "run_eval_phi3.slurm" "run_eval_7b.slurm" "run_eval_14b.slurm" "run_generation_eval.py" "save_ablated_models.py" "run_save_models.slurm")
 
 echo "=========================================================="
 echo "🚀 iLabs Automation Deployment Script"
@@ -21,9 +21,9 @@ ssh "$NETID@$REMOTE_HOST" "mkdir -p $REMOTE_DIR"
 echo "Step 2: Transferring scripts to $REMOTE_HOST..."
 scp "${FILES[@]}" "$NETID@$REMOTE_HOST:$REMOTE_DIR/"
 
-# 3. Submit job
-echo "Step 3: Submitting SLURM job..."
-ssh "$NETID@$REMOTE_HOST" "cd $REMOTE_DIR && sbatch run_final.slurm"
+# 3. Submit Phase 2 jobs (Save Models -> Parallel Evals)
+echo "Step 3: Submitting SLURM jobs..."
+ssh "$NETID@$REMOTE_HOST" "cd $REMOTE_DIR && JOBID=\$(sbatch --parsable run_save_models.slurm) && sbatch --dependency=afterok:\$JOBID run_eval_llama8b.slurm && sbatch --dependency=afterok:\$JOBID run_eval_mistral7b.slurm && sbatch --dependency=afterok:\$JOBID run_eval_phi3.slurm"
 
 echo "=========================================================="
 echo "✅ Deployment Complete!"

@@ -2,6 +2,7 @@ import json
 import torch
 import argparse
 import re
+import os
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -14,15 +15,27 @@ PATTERNS = {
     "passport": re.compile(r'\b[A-Za-z]\d{8}\b|\b[A-Za-z]{2}\d{7}\b')
 }
 
-def evaluate_generative_model(model_path, dataset, device="mps"):
+def evaluate_generative_model(model_path, dataset, device="mps", is_peft=False, base_model_name=None):
     print(f"\n======================================")
     print(f"Loading Generative Model: {model_path}")
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path, 
-        device_map=device, 
-        torch_dtype=torch.float16
-    ).eval()
+    
+    if is_peft:
+        print(f"Attaching PEFT adapter to base model {base_model_name}...")
+        from peft import PeftModel
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_name, 
+            device_map=device, 
+            torch_dtype=torch.float16
+        )
+        model = PeftModel.from_pretrained(base_model, model_path).eval()
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path, 
+            device_map=device, 
+            torch_dtype=torch.float16
+        ).eval()
     
     results = []
     print(f"Running 150 Structural Benchmark Prompts...")
@@ -94,6 +107,10 @@ def generate_report(base_results, unlearned_results, output_path):
         md += f"**Unlearned Response ({u_status}):**\n> {u['response']}\n\n"
         md += "---\n"
         
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
     with open(output_path, "w") as f:
         f.write(md)
         
@@ -103,8 +120,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", type=str, required=True, help="Path or HuggingFace ID of base model")
     parser.add_argument("--unlearned", type=str, required=True, help="Path to unlearned safetensors logic")
-    parser.add_argument("--dataset", type=str, default="pii_generation_dataset.json")
-    parser.add_argument("--output", type=str, default="benchmark_report_generative.md")
+    parser.add_argument("--dataset", type=str, default="benchmarks/datasets/pii_generation_dataset.json")
+    parser.add_argument("--output", type=str, default="results/generation/benchmark_report_generative.md")
+    parser.add_argument("--is_peft", action="store_true", help="Set to true if the unlearned model is a PEFT LoRA adapter")
     args = parser.parse_args()
     
     with open(args.dataset, "r") as f:
@@ -119,6 +137,6 @@ if __name__ == "__main__":
         
     print(f"Starting Generative Orthogonal Pipeline on {device}...")
     base_results = evaluate_generative_model(args.base, dataset, device=device)
-    unlearned_results = evaluate_generative_model(args.unlearned, dataset, device=device)
+    unlearned_results = evaluate_generative_model(args.unlearned, dataset, device=device, is_peft=args.is_peft, base_model_name=args.base)
     
     generate_report(base_results, unlearned_results, args.output)

@@ -1,0 +1,1 @@
+../../deploy_mmlu_ilabs.sh

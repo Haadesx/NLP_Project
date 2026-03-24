@@ -1,0 +1,183 @@
+\documentclass[11pt]{article}
+\usepackage[preprint]{acl}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\setcitestyle{numbers,square,sort&compress}
+
+\makeatletter
+\renewenvironment{thebibliography}[1]
+  {\section*{References}%
+   \@mkboth{References}{References}%
+   \list{\@biblabel{\@arabic\c@enumiv}}%
+        {\settowidth\labelwidth{\@biblabel{#1}}%
+         \leftmargin\labelwidth
+         \advance\leftmargin\labelsep
+         \usecounter{enumiv}}%
+   \sloppy
+   \clubpenalty4000
+   \widowpenalty4000
+   \sfcode`\.\@m}
+  {\def\@noitemerr
+    {\@latex@warning{Empty `thebibliography' environment}}%
+   \endlist}
+\makeatother
+
+\title{DPO-Based Unlearning for Preventing\\PII Leakage in Language Models}
+
+\author{
+Aparajita Sarkar$^1$\thanks{Equal contribution.} \and
+Urvi Desai$^1$\footnotemark[1] \and
+Varesh Patel$^1$\footnotemark[1] \\
+$^1$Rutgers, New Brunswick, USA \\
+\texttt{\{as5760, ubd4, vp752\}@scarletmail.rutgers.edu}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Our proposal argued that directional abliteration could provide a zero-gradient machine unlearning mechanism for personally identifiable information (PII) in open-source language models. That hypothesis has now been tested at larger scale and against stronger evaluation criteria. The repository has evolved from an abliteration-focused prototype into a comparative unlearning framework with two intervention pipelines: orthogonal representation ablation and Direct Preference Optimization (DPO) unlearning. Across Phi-3, Mistral~7B, Llama~3~8B, Qwen~2.5~7B, and Qwen~2.5~14B, the main result is clear: orthogonal ablation typically preserves MMLU but does not reliably reduce generative PII leakage, whereas DPO preserves MMLU almost as well and reduces leakage far more effectively. The strongest completed DPO results are Mistral~7B and Llama~3~8B, both of which reach 0.0\% leakage while preserving MMLU almost perfectly. This report therefore records how the original abliteration thesis was implemented, where it failed, why the project expanded to preference-based unlearning, and how that expansion now defines the trajectory of the final paper.
+\end{abstract}
+
+\section{Introduction}
+
+The final proposal framed PII removal as a practical machine unlearning problem for open-source language models. That framing remains intact. Large language models memorize training data and can leak sensitive information under adversarial prompting \citep{carlini2021extracting, lukas2023analyzing}. This is a privacy problem not only because the memorized data may be identifying, but because language models routinely violate contextual norms about when such information should be shared \citep{brown2022does, mireshghallah2023can}. At the same time, regulatory and operational pressures make full retraining an unrealistic response to every deletion request, which is why scalable machine unlearning remains an active research problem \citep{bourtoule2021machine, golatkar2020eternal, tarun2023fast}.
+
+Our original thesis was that \emph{targeted model ablation} might offer a practical alternative to retraining-heavy unlearning. Motivated by recent work on refusal-direction abliteration and low-dimensional behavior editing \citep{arditi2024refusal, heretic2025, agnihotri2025granular}, we proposed removing the activation-space directions associated with PII recall directly from model weights. The appeal was clear: no gradient updates, no access to the original training data, and direct applicability to already-released checkpoints.
+
+Mid-semester, the project has become more scientifically useful than the original single-method plan. The repository still contains the abliteration pipeline proposed in the paper, but it now also contains a full DPO-based unlearning pipeline and a shared evaluation stack for generative leakage and MMLU retention. This change was not a cosmetic extension. It was forced by the empirical outcome of the first phase: ablation preserved broad capability but failed to behave like a reliable privacy defense. The report therefore continues the proposal in the most natural way for a final paper: it preserves the original problem statement and literature grounding, but updates the methodology and conclusions in light of the evidence collected so far.
+
+\section{Related Work}
+
+The proposal situated this project at the intersection of privacy leakage, machine unlearning, and mechanistic model intervention. Those same three threads still organize the mid-semester story.
+
+\subsection{Privacy Vulnerabilities and Memorization Attacks}
+
+Data extraction and membership inference studies show that modern language models can reveal memorized training content under targeted prompting \citep{carlini2021extracting, shokri2017membership, mireshghallah2022quantifying}. For PII specifically, \citet{lukas2023analyzing} demonstrate that language models can emit identifying strings in ways that remain dangerous even when the data are partially sanitized. This reinforces the broader argument of \citet{brown2022does} and \citet{mireshghallah2023can}: privacy in language modeling is contextual, and models do not naturally learn those contextual boundaries.
+
+\subsection{Privacy Regularization and Training Interventions}
+
+The proposal contrasted post-hoc unlearning with training-time privacy defenses. That comparison remains important for the final paper. Differential privacy offers rigorous guarantees but often incurs substantial utility cost, especially in language settings where memorized information is diffuse and overlapping \citep{abadi2016deep, bagdasaryan2019differential}. Other privacy-oriented training interventions, including privacy regularization, aim to suppress sensitive features during learning rather than after deployment \citep{mireshghallah2021privacy}. These approaches are important baselines conceptually, but they do not solve the operational problem that motivated this project: how to intervene on an already-released open-weight model after the fact.
+
+\subsection{Machine Unlearning Frameworks}
+
+Existing defenses split into two broad families. Training-time privacy mechanisms such as differential privacy provide formal guarantees but often degrade utility and behave poorly for overlapping linguistic information \citep{abadi2016deep, bagdasaryan2019differential}. Machine unlearning methods aim to remove the effect of selected data without full retraining, but exact and approximate methods remain operationally expensive for large language models \citep{bourtoule2021machine, golatkar2020eternal, tarun2023fast}. The motivation for this project is unchanged: a practical privacy intervention for open-weight LLMs should be deployable after training, cheap to run, and measurable both in privacy improvement and capability retention.
+
+\subsection{Model Ablation and Inference-Time Interventions}
+
+The proposal's main novelty claim was to repurpose abliteration-style interventions for privacy rather than alignment removal. That claim remains correct at the level of methodology. Prior work shows that targeted behaviors and vulnerabilities can often be manipulated through low-dimensional interventions in activation space \citep{zhao2024facilitating, arditi2024refusal, labonne2024uncensor, agnihotri2025granular}. The Heretic framework \citep{heretic2025} made this especially operational by turning directional ablation into a reproducible weight-editing workflow. Our first project phase implemented that idea for PII. The mid-semester result, however, is that the conceptual transfer from refusal removal to privacy unlearning is much less direct than the proposal initially suggested.
+
+\section{Proposed Approach}
+
+This section preserves the logic of the proposal's original ``Proposed Approach'' section, but updates it to reflect what was actually built and what changed after experimentation.
+
+\subsection{Activation Collection and Orthogonal Ablation Pipeline}
+
+The first pipeline in the repository still follows the proposal closely. We collect hidden-state behavior associated with PII prompts, derive a distinguishing direction or subspace, and project that signal out of selected weight matrices. The implementation spans cluster-side PyTorch code for Qwen models and MLX-based local experimentation on Apple Silicon. This preserves the original contribution of the proposal: inference-time geometric intervention as a candidate machine unlearning mechanism.
+
+The phase was still scientifically valuable even where it failed. It established that the project could operationalize abliteration on real checkpoints, save modified models, and evaluate them with a shared benchmark. It also revealed that removing a direction correlated with PII-like prompts is not equivalent to removing the model's tendency to emit structured identifiers safely and robustly.
+
+\subsection{PII Direction Computation and Preference-Based Extension}
+
+Once the ablation results stabilized, the repository expanded to include a DPO pipeline. This was the critical mid-semester pivot. Instead of assuming that PII leakage can be solved through representational surgery alone, the DPO pipeline treats the problem as one of preference alignment: prompts requesting PII are paired with a refusal as the chosen output and a leakage-style answer as the rejected output. The implementation in \texttt{dpo\_unlearning/train\_dpo.py} uses 4-bit QLoRA adapters with TRL's \texttt{DPOTrainer}, making the intervention cheap enough to run on iLabs GPUs while still targeting the behavior measured by the benchmark.
+
+This shift is what makes the report a continuation of the proposal rather than a contradiction of it. The proposal's core question was how to unlearn PII without full retraining. Mid-semester, the answer appears to be that geometry-only ablation is not sufficient on its own, but lightweight preference-based unlearning may be.
+
+\subsection{Weight Editing, Adapter Training, and Shared Evaluation}
+
+The proposal emphasized privacy--utility tradeoffs. The current repository now measures that tradeoff with a stronger and more comparable setup than the original small-model MLX experiments. Generative leakage is evaluated with \texttt{run\_generation\_eval.py} over 150 structured PII prompts spanning Social Security numbers, phone numbers, email addresses, credit cards, and related identifiers. Capability retention is evaluated with 5-shot MMLU through \texttt{lm-eval}. Together, these two benchmarks provide the comparison the final paper will need: not just whether a method changes internal representations, but whether it reduces leakage while preserving general reasoning.
+
+\subsection{Evaluation Metrics and Engineering Corrections}
+
+Several implementation issues materially shaped what could be evaluated. The DPO pipeline required resolving TRL API changes, including the move to \texttt{processing\_class=} and the need to use \texttt{bf16=True}. The first full MMLU batch on iLabs failed due to GPU memory pressure and was repaired by moving to 4-bit loading, batch size 1, memory caps, and CPU offload. Phi-3 then exposed a second failure mode: \texttt{lm-eval} with the remote Phi-3 implementation crashed on a cache API mismatch. The final cluster script special-cases Phi-3 with \texttt{trust\_remote\_code=False} and \texttt{attn\_implementation=eager}, which allowed both the base and DPO Phi-3 MMLU runs to complete. These engineering decisions are part of the method now and should be reflected in the final paper.
+
+\section{Novelty and Contributions}
+
+Relative to the proposal, the project's contributions are now best understood as a mid-semester refinement of the original thesis rather than a simple validation of it.
+
+\begin{enumerate}
+    \item \textbf{We implemented the proposal's core privacy-ablation idea on real open-weight instruction-tuned models.} The repository now contains a full orthogonal ablation pipeline spanning local MLX experimentation and cluster-side PyTorch evaluation.
+    \item \textbf{We turned the repository into a comparative unlearning framework rather than a single-method prototype.} The addition of DPO-based unlearning makes it possible to compare a geometric intervention against a preference-based one under the same evaluation setup.
+    \item \textbf{We established that capability retention is not a sufficient proxy for privacy success.} The Qwen ablation runs preserve MMLU almost perfectly while failing to deliver convincing leakage reductions, which is itself an important empirical result.
+    \item \textbf{We identified preference-based unlearning as the more promising practical direction for the final paper.} Mistral~7B and Phi-3 show that DPO can preserve general capability while improving leakage behavior far more reliably than ablation.
+    \item \textbf{We resolved the engineering barriers required for reproducible large-model evaluation on iLabs.} This includes TRL API fixes, 4-bit MMLU deployment with offload, and a Phi-3 compatibility patch for \texttt{lm-eval}.
+\end{enumerate}
+
+\section{Preliminary Results}
+
+\subsection{Generative PII leakage}
+
+Table~\ref{tab:leakage} reports the completed leakage comparisons. The numbers come from stored benchmark artifacts and completed cluster evaluations. Because the current evaluator samples without a fixed random seed, base leakage can vary across paired runs; for that reason, the comparative trend matters more than any single percentage.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{Method} & \textbf{Base} & \textbf{After} & $\Delta$ \\
+\midrule
+Phi-3 & Ablation & 21.3\% & 34.7\% & +13.4 \\
+Phi-3 & DPO & 28.7\% & 18.0\% & -10.7 \\
+Mistral 7B & Ablation & 30.7\% & 32.0\% & +1.3 \\
+Mistral 7B & DPO & 35.3\% & 0.0\% & -35.3 \\
+Qwen 2.5 7B & Ablation & 52.0\% & 48.7\% & -3.3 \\
+Qwen 2.5 14B & Ablation & 45.3\% & 49.3\% & +4.0 \\
+Llama 3 8B & DPO & 42.7\% & 0.0\% & -42.7 \\
+\bottomrule
+\end{tabular}
+\caption{Generative PII leakage results from completed evaluations. Lower is better.}
+\label{tab:leakage}
+\end{table}
+
+The ablation story is now fairly consistent across models: it is not a dependable privacy intervention. Phi-3 leakage worsened dramatically under ablation, Mistral worsened slightly, Qwen~7B improved only marginally, and Qwen~14B worsened in the stored report. In contrast, DPO directly targets the refusal behavior that the leakage benchmark rewards. Mistral~7B and Llama~3~8B both reached 0.0\% leakage, and Phi-3 improved materially even though it did not reach zero. This makes the DPO results complete across three major model families rather than just a single successful case study.
+
+\subsection{MMLU retention}
+
+Table~\ref{tab:mmlu} shows the final MMLU results for all completed base versus unlearned pairs. The central finding is that \emph{every} completed intervention preserved MMLU extremely well. The largest drop across the entire table is only -0.35.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Model} & \textbf{Base} & \textbf{Unlearned} & $\Delta$ \\
+\midrule
+Mistral 7B & 58.10 & 57.75 & -0.35 \\
+Llama 3 8B & 63.27 & 62.98 & -0.29 \\
+Phi-3 & 66.95 & 66.95 & +0.00 \\
+Qwen 2.5 7B & 72.22 & 72.19 & -0.03 \\
+Qwen 2.5 14B & 78.56 & 78.56 & +0.00 \\
+\bottomrule
+\end{tabular}
+\caption{5-shot MMLU results from the final \texttt{results/mmlu\_*} outputs.}
+\label{tab:mmlu}
+\end{table}
+
+This is where the comparison becomes scientifically meaningful. If one looked only at MMLU, ablation would appear highly successful: the Qwen models retain essentially all of their measured capability. But those same models do not show convincing privacy improvement. DPO achieves nearly the same retention while producing far stronger leakage reductions. The clearest completed examples are Mistral~7B and Llama~3~8B, where the privacy gain is dramatic and the MMLU cost is negligible. Phi-3 reinforces the same point in a different way: its DPO run preserves MMLU exactly while still improving leakage by more than ten points. The evidence now favors preference-based unlearning over orthogonal ablation as the more reliable privacy mechanism.
+
+\section{Timeline and Plan}
+
+The project is now in a stronger position than the proposal anticipated, but the remaining work is more focused. The original plan was to scale the abliteration study outward. The updated plan is to convert the current comparative results into a final paper with tighter evaluation.
+
+\begin{itemize}
+    \item \textbf{Short term:} make \texttt{run\_generation\_eval.py} deterministic by fixing the evaluation seed and documenting the decoding configuration used for the final paper tables.
+    \item \textbf{Short term:} stabilize cluster evaluation dependencies so that MMLU jobs do not rely on runtime package upgrades.
+    \item \textbf{Final stage:} rewrite the paper so that the original abliteration proposal becomes the opening hypothesis, the ablation results serve as the key negative or mixed finding, and the DPO results provide the main positive conclusion.
+\end{itemize}
+
+\section{Conclusion}
+
+This mid-semester report should be read as the next section of the proposal, not as a disconnected status update. The original paper asked whether targeted model ablation could act as a practical unlearning mechanism for PII. The answer so far is nuanced. The project successfully implemented that idea, scaled it to larger open models, and tested it with direct leakage and retention benchmarks. Those experiments show that orthogonal ablation can preserve measured capability, but that preservation does not translate into dependable privacy behavior. In several cases, leakage remained essentially unchanged or worsened.
+
+The project's second phase produced the stronger result. DPO-based unlearning aligns the model directly against the leakage behavior under study and achieves substantially better privacy outcomes with negligible MMLU loss. The strongest completed results are Mistral~7B and Llama~3~8B, both of which reduce leakage to zero while preserving general capability almost perfectly. That finding now defines the path to the final paper: start from the proposal's mechanistic abliteration hypothesis, present the negative and mixed ablation evidence honestly, and then show that preference-based unlearning is the more reliable method for preventing structured PII leakage in open-source instruction-tuned language models.
+
+\bibliography{custom}
+
+\end{document}

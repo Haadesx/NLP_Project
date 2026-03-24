@@ -1,0 +1,1 @@
+../../run_eval_mistral7b.slurm

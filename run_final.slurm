@@ -3,7 +3,7 @@
 #SBATCH --output=logs/sweep_%j.out
 #SBATCH --error=logs/sweep_%j.err
 #SBATCH --time=04:00:00
-#SBATCH --gres=gpu:a6000:1
+#SBATCH --gres=gpu:2
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=8
 
@@ -17,12 +17,16 @@ conda activate diffullm 2>/dev/null || conda activate /common/users/vp752/minico
 
 # Set Hugging Face cache to high-capacity /common/users volume to avoid quota errors
 export HF_HOME=/common/users/vp752/.cache/huggingface
+export TMPDIR=/common/users/vp752/
+if [ -z "${HF_TOKEN:-}" ]; then
+    echo "HF_TOKEN is not set. Export it before running this job." >&2
+    exit 1
+fi
+export HF_TOKEN
 
 PYTHON_CMD=$(which python)
 echo "Using Python from: $PYTHON_CMD"
 echo "Starting Sweep on $(hostname)"
 
-# Run the 14B and 7B models along with 0.5B for completion
-$PYTHON_CMD pytorch_qwen_abliterator.py --model "Qwen/Qwen2.5-14B-Instruct" --output "results/qwen14b.json"
-$PYTHON_CMD pytorch_qwen_abliterator.py --model "Qwen/Qwen2.5-7B-Instruct" --output "results/qwen7b.json"
-$PYTHON_CMD pytorch_qwen_abliterator.py --model "Qwen/Qwen1.5-0.5B-Chat" --output "results/qwen05b.json"
+# Run Llama 3.1 8B model only (Qwen already completed)
+$PYTHON_CMD pytorch_qwen_abliterator.py --model "meta-llama/Meta-Llama-3.1-8B-Instruct" --output "results/llama8b.json"

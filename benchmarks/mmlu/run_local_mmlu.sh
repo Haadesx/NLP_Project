@@ -1,0 +1,1 @@
+../../run_local_mmlu.sh

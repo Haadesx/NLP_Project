@@ -54,9 +54,9 @@ def save_ablated_model(model_name, method, strength, out_path):
 
 if __name__ == "__main__":
     configs = [
-        ("Qwen/Qwen1.5-0.5B-Chat", 3, 7.5, "/common/users/vp752/ablated_models/qwen05b_unlearned"),
-        ("Qwen/Qwen2.5-7B-Instruct", 1, 0.5, "/common/users/vp752/ablated_models/qwen7b_unlearned"),
-        ("Qwen/Qwen2.5-14B-Instruct", 1, 0.5, "/common/users/vp752/ablated_models/qwen14b_unlearned")
+        ("meta-llama/Meta-Llama-3.1-8B-Instruct", 1, 0.5, "/common/users/vp752/ablated_models/llama8b_unlearned"),
+        ("mistralai/Mistral-7B-Instruct-v0.2", 1, 0.5, "/common/users/vp752/ablated_models/mistral7b_unlearned"),
+        ("microsoft/Phi-3-mini-4k-instruct", 1, 0.5, "/common/users/vp752/ablated_models/phi3_unlearned")
     ]
     for model_name, method, strength, out_path in configs:
         os.makedirs(out_path, exist_ok=True)
