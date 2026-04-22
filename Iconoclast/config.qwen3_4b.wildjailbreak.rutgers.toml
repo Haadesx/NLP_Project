@@ -1,0 +1,47 @@
+# Rutgers paper run for jailbreak-camouflage / borderline scoring.
+# Uses adversarial WildJailbreak prompts to stress disclaimer-heavy near misses.
+
+model = "Qwen/Qwen3-4B-Instruct-2507"
+
+seed = 42
+quantization = "none"
+batch_size = 0
+max_batch_size = 8
+max_response_length = 96
+
+n_trials = 32
+n_startup_trials = 10
+
+orthogonalize_direction = true
+row_normalization = "pre"
+overrefusal_penalty = 0.30
+harmful_marker_penalty = 0.20
+direction_variance_floor = 1e-6
+
+study_checkpoint_dir = "checkpoints_qwen3_4b_wildjailbreak"
+
+[good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:240]"
+column = "text"
+residual_plot_label = '"Harmless" prompts'
+residual_plot_color = "royalblue"
+
+[bad_prompts]
+dataset = "allenai/wildjailbreak"
+name = "eval"
+split = "train[:1600]"
+column = "adversarial"
+residual_plot_label = '"Jailbreak" prompts'
+residual_plot_color = "darkorange"
+
+[good_evaluation_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "test[:64]"
+column = "text"
+
+[bad_evaluation_prompts]
+dataset = "allenai/wildjailbreak"
+name = "eval"
+split = "train[1600:2000]"
+column = "adversarial"

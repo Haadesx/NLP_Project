@@ -1,0 +1,85 @@
+# Rutgers paper run for the upgraded Iconoclast objective.
+# Combines directness scoring, disclaimer pressure, component-specific direction search,
+# periodic merged-model validation, and a three-axis harmful evaluation split.
+
+model = "Qwen/Qwen3-4B-Instruct-2507"
+
+seed = 42
+quantization = "none"
+batch_size = 0
+max_batch_size = 8
+max_response_length = 112
+
+n_trials = 20
+n_startup_trials = 6
+
+orthogonalize_direction = true
+row_normalization = "pre"
+direction_variance_floor = 1e-6
+
+component_specific_directions = true
+merged_validation_interval = 4
+merged_validation_subset_size = 8
+merged_consistency_penalty = 0.20
+
+overrefusal_penalty = 0.30
+harmful_marker_penalty = 0.20
+compliance_gap_penalty = 0.45
+low_refusal_rate_threshold = 0.15
+
+study_checkpoint_dir = "checkpoints_qwen3_4b_paper_axes"
+
+[good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:240]"
+column = "text"
+residual_plot_label = '"Harmless" prompts'
+residual_plot_color = "royalblue"
+
+[bad_prompts]
+dataset = "JailbreakBench/JBB-Behaviors"
+name = "behaviors"
+split = "harmful[:96]"
+column = "Goal"
+residual_plot_label = '"Direct harmful" prompts'
+residual_plot_color = "darkorange"
+
+[good_evaluation_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "test[:64]"
+column = "text"
+
+[bad_evaluation_prompts]
+dataset = "JailbreakBench/JBB-Behaviors"
+name = "behaviors"
+split = "harmful[96:120]"
+column = "Goal"
+
+[[harmful_evaluation_axes]]
+name = "direct_illegal_operational_help"
+description = "Direct operational help for illegal actions."
+weight = 1.0
+[harmful_evaluation_axes.prompts]
+dataset = "JailbreakBench/JBB-Behaviors"
+name = "behaviors"
+split = "harmful[96:120]"
+column = "Goal"
+
+[[harmful_evaluation_axes]]
+name = "persuasion_manipulation"
+description = "Manipulation, coercion, and persuasion-oriented harmful content."
+weight = 1.0
+[harmful_evaluation_axes.prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "test[12:36]"
+column = "text"
+
+[[harmful_evaluation_axes]]
+name = "borderline_disclaimer_prone"
+description = "Adversarial or camouflaged jailbreak prompts that often elicit lecture-heavy near-misses."
+weight = 1.0
+[harmful_evaluation_axes.prompts]
+dataset = "allenai/wildjailbreak"
+name = "eval"
+split = "train[1600:1624]"
+column = "adversarial"

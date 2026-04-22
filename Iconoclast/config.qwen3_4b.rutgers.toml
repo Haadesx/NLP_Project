@@ -1,0 +1,45 @@
+# Rutgers experiment targeting a stronger non-thinking open model.
+# Official model: Qwen/Qwen3-4B-Instruct-2507
+
+model = "Qwen/Qwen3-4B-Instruct-2507"
+
+seed = 42
+quantization = "none"
+batch_size = 0
+max_batch_size = 8
+max_response_length = 96
+
+n_trials = 24
+n_startup_trials = 8
+
+orthogonalize_direction = true
+row_normalization = "pre"
+overrefusal_penalty = 0.35
+harmful_marker_penalty = 0.15
+direction_variance_floor = 1e-6
+
+study_checkpoint_dir = "checkpoints_qwen3_4b_rutgers"
+
+[good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:192]"
+column = "text"
+residual_plot_label = '"Harmless" prompts'
+residual_plot_color = "royalblue"
+
+[bad_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "train[:192]"
+column = "text"
+residual_plot_label = '"Harmful" prompts'
+residual_plot_color = "darkorange"
+
+[good_evaluation_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "test[:48]"
+column = "text"
+
+[bad_evaluation_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "test[:48]"
+column = "text"

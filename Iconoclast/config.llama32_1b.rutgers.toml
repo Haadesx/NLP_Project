@@ -1,0 +1,43 @@
+# Rutgers-friendly first run: avoid bitsandbytes and keep the model small.
+
+model = "meta-llama/Llama-3.2-1B-Instruct"
+
+seed = 42
+quantization = "none"
+batch_size = 0
+max_batch_size = 16
+max_response_length = 80
+
+n_trials = 12
+n_startup_trials = 4
+
+orthogonalize_direction = true
+row_normalization = "pre"
+overrefusal_penalty = 0.35
+direction_variance_floor = 1e-6
+
+study_checkpoint_dir = "checkpoints_llama32_1b_rutgers"
+
+[good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:160]"
+column = "text"
+residual_plot_label = '"Harmless" prompts'
+residual_plot_color = "royalblue"
+
+[bad_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "train[:160]"
+column = "text"
+residual_plot_label = '"Harmful" prompts'
+residual_plot_color = "darkorange"
+
+[good_evaluation_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "test[:48]"
+column = "text"
+
+[bad_evaluation_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "test[:48]"
+column = "text"

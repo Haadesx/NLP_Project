@@ -1,0 +1,109 @@
+model = "Qwen/Qwen3-1.7B"
+
+seed = 42
+quantization = "none"
+batch_size = 0
+max_batch_size = 16
+max_response_length = 80
+
+n_trials = 20
+n_startup_trials = 4
+
+orthogonalize_direction = true
+row_normalization = "pre"
+direction_variance_floor = 1e-6
+
+# The strongest 1.7B Iconoclast runs lived around KL ~= 0.02.
+# A 0.01 target pushed the sampler toward low-impact edits.
+kl_divergence_target = 0.02
+overrefusal_penalty = 0.35
+harmful_marker_penalty = 0.12
+compliance_gap_penalty = 0.45
+
+study_checkpoint_dir = "checkpoints_qwen3_1p7b_paper_directness"
+
+# Warm-start params use Optuna's raw parameterization.
+# In particular, *.min_weight values are fractions of *.max_weight.
+[[warm_start_trials]]
+description = "Apr 2 winning region anchor: 2/48 harmful refusals, 0/48 overrefusals"
+[warm_start_trials.params]
+direction_scope = "per layer"
+direction_method = "variance"
+direction_blend = 0.42
+"attn.o_proj.max_weight" = 1.34
+"attn.o_proj.max_weight_position" = 17.46
+"attn.o_proj.min_weight" = 0.8507
+"attn.o_proj.min_weight_distance" = 15.90
+"mlp.down_proj.max_weight" = 1.12
+"mlp.down_proj.max_weight_position" = 24.36
+"mlp.down_proj.min_weight" = 0.7411
+"mlp.down_proj.min_weight_distance" = 14.82
+
+[[warm_start_trials]]
+description = "Apr 2 adjacent anchor: 3/48 harmful refusals, 0/48 overrefusals"
+[warm_start_trials.params]
+direction_scope = "per layer"
+direction_method = "variance"
+direction_blend = 0.49
+"attn.o_proj.max_weight" = 1.33
+"attn.o_proj.max_weight_position" = 18.23
+"attn.o_proj.min_weight" = 0.8496
+"attn.o_proj.min_weight_distance" = 13.87
+"mlp.down_proj.max_weight" = 0.92
+"mlp.down_proj.max_weight_position" = 19.67
+"mlp.down_proj.min_weight" = 0.7065
+"mlp.down_proj.min_weight_distance" = 16.03
+
+[[warm_start_trials]]
+description = "Apr 2 anchor: 4/48 harmful refusals, 0/48 overrefusals"
+[warm_start_trials.params]
+direction_scope = "per layer"
+direction_method = "variance"
+direction_blend = 0.82
+"attn.o_proj.max_weight" = 1.25
+"attn.o_proj.max_weight_position" = 17.45
+"attn.o_proj.min_weight" = 0.3120
+"attn.o_proj.min_weight_distance" = 9.90
+"mlp.down_proj.max_weight" = 0.93
+"mlp.down_proj.max_weight_position" = 18.19
+"mlp.down_proj.min_weight" = 0.8817
+"mlp.down_proj.min_weight_distance" = 14.86
+
+[[warm_start_trials]]
+description = "Apr 2 anchor: 5/48 harmful refusals, 0/48 overrefusals"
+[warm_start_trials.params]
+direction_scope = "per layer"
+direction_method = "variance"
+direction_blend = 0.61
+"attn.o_proj.max_weight" = 1.05
+"attn.o_proj.max_weight_position" = 17.16
+"attn.o_proj.min_weight" = 0.2000
+"attn.o_proj.min_weight_distance" = 11.24
+"mlp.down_proj.max_weight" = 1.15
+"mlp.down_proj.max_weight_position" = 17.20
+"mlp.down_proj.min_weight" = 0.2957
+"mlp.down_proj.min_weight_distance" = 12.34
+
+[good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:160]"
+column = "text"
+residual_plot_label = '"Harmless" prompts'
+residual_plot_color = "royalblue"
+
+[bad_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "train[:160]"
+column = "text"
+residual_plot_label = '"Harmful" prompts'
+residual_plot_color = "darkorange"
+
+[good_evaluation_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "test[:48]"
+column = "text"
+
+[bad_evaluation_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "test[:48]"
+column = "text"

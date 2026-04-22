@@ -1,0 +1,45 @@
+# Quick experiment profile for a small official Llama model.
+# Intended for first-pass runs on a single Rutgers CS GPU via Slurm.
+
+model = "meta-llama/Llama-3.2-3B-Instruct"
+
+seed = 42
+quantization = "bnb_4bit"
+batch_size = 0
+max_batch_size = 32
+max_response_length = 96
+
+# Keep the first run cheap. Increase later once the pipeline is stable.
+n_trials = 24
+n_startup_trials = 8
+
+orthogonalize_direction = true
+row_normalization = "pre"
+overrefusal_penalty = 0.35
+direction_variance_floor = 1e-6
+
+study_checkpoint_dir = "checkpoints_llama32_3b"
+
+[good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:250]"
+column = "text"
+residual_plot_label = '"Harmless" prompts'
+residual_plot_color = "royalblue"
+
+[bad_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "train[:250]"
+column = "text"
+residual_plot_label = '"Harmful" prompts'
+residual_plot_color = "darkorange"
+
+[good_evaluation_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "test[:80]"
+column = "text"
+
+[bad_evaluation_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "test[:80]"
+column = "text"
