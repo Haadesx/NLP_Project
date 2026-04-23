@@ -11,6 +11,7 @@ rsync -av --delete \
   --exclude 'logs' \
   --exclude '.pytest_cache' \
   --exclude 'checkpoints*' \
+  --exclude 'results_cluster' \
   "$PROJECT_ROOT"/ "$REMOTE_HOST:$REMOTE_DIR"/
 
 echo "Synced $PROJECT_ROOT -> $REMOTE_HOST:$REMOTE_DIR"

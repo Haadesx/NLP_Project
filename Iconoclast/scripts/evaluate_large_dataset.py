@@ -198,6 +198,10 @@ def apply_trial(runtime: dict[str, Any], trial_data: dict[str, Any]) -> None:
 def main() -> None:
     args = parse_args()
     
+    # Critical: Prevent Pydantic BaseSettings in iconoclast.config from 
+    # trying to parse sys.argv, which would collide with our own arguments.
+    sys.argv = [sys.argv[0]]
+    
     settings_json, trials = load_study(Path(args.checkpoint))
     best_trial = pick_best_trial(trials)
     
